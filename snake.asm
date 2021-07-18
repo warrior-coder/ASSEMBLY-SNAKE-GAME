@@ -1,35 +1,34 @@
-.MODEL TINY
-.STACK 10h                              ; Reserve stack, but not use here
+.MODEL SMALL
+.STACK 10h                              
 
 .DATA
-    width equ 46h                       ; Background width = 70
-    height equ 14h                      ; Background height = 20
+    G_WIDTH         EQU 28h             ; Game width = 50
+    G_HEIGHT        EQU 14h             ; Game height = 20
                                             
-    key_code DB ?  
+    wait_time       EQU 7D00h           ; The less wait_time, the faster snake moves
+    wait_i          DW ?  
+        
+    key_code        DB ?  
     
-    wait_time equ 07D00h                ; The less wait_time, the faster snake moves
-    wait_i DW ?  
+    head_x          DB 0Ah              
+    head_y          DB 0Ah
+    head_dir_y      DB ?
+    head_dir_x      DB ?    
     
-    head_x DB 0Ah
-    head_y DB 0Ah
-    head_dir_y DB ?
-    head_dir_x DB ?    
-    
-    body_x DB 100h dup (00h)            ; Reserve 256 zero bytes for body_x
-    body_y DB 100h dup (00h)            ; Reserve 256 zero bytes for body_y
-    body_len DW 03h    
-    body_i DW ?                                              
-    body_clear_x DB ? 
-    body_clear_y DB ?
-    
-    clear_line DB 46h dup(0DBh)         ; clear_line length = width
-    cell_symbol DB 0DBh                 ; Filled cell symbol = 219    
+    body_x          DB 0FFh DUP (?)     ; Reserve 256 bytes for body position
+    body_y          DB 0FFh DUP (?)          
+    body_len        DW 03h    
+    body_clear_x    DB ? 
+    body_clear_y    DB ?
+                     
+    clear_line      DB G_WIDTH DUP (0DBh)
+    cell_symbol     DB 0DBh             ; Filled cell symbol = 219    
     
     food_x DB ?
     food_y DB ? 
     
 .CODE
-start:  
+main:  
     mov ax, @data                       
     mov ds, ax                          ; Connect data segment to code
     mov es, ax                          ; Connect data segment to extra segment 
@@ -38,7 +37,7 @@ start:
     mov key_code, 0                     ; Use key_code before game as loop iterator
 clear_lines_loop:                       ; Clear background
     mov al, 01h                         
-    mov cx, width                       
+    mov cx, G_WIDTH                       
     mov bp, offset clear_line           
                 
     mov bl, 18h                        
@@ -48,7 +47,7 @@ clear_lines_loop:                       ; Clear background
     int 10h   
     
     inc key_code
-    cmp key_code, height                  
+    cmp key_code, G_HEIGHT                  
     jl clear_lines_loop 
     
     mov key_code, 20h                   ; Set key_code to D button
@@ -60,19 +59,51 @@ game_loop:
     call check_food
     call draw_snake 
     call draw_food
-             
     mov wait_i, 00h 
     
 wait_loop:
     mov ah, 01h                         ; Check for keystroke
     int 16h 
-    jz skip_key                         ; Z Flag set if no keystroke
+    jz process_key                      ; Z Flag set if no keystroke
                       
     mov ah, 00h                         ; Read key if keystroke 
     int 16h         
-    mov key_code, ah    
-           
-skip_key:   
+    mov key_code, ah
+    jmp process_key
+
+; PROCESSING KEY
+jump_key_up:                            ; Set directions according to key_code after process_key
+    cmp head_dir_y, 01h                 ; If opposite direction 
+    je game_loop    
+    mov head_dir_y, -01h
+    mov head_dir_x, 00h
+    jmp game_loop  
+    
+jump_key_down:
+    cmp head_dir_y, -01h
+    je game_loop
+    mov head_dir_y, 01h
+    mov head_dir_x, 00h
+    jmp game_loop 
+    
+jump_key_left:
+    cmp head_dir_x, 01h
+    je game_loop
+    mov head_dir_y, 00h
+    mov head_dir_x, -01h
+    jmp game_loop 
+
+jump_key_right:
+    cmp head_dir_x, -01h
+    je game_loop
+    mov head_dir_y, 00h
+    mov head_dir_x, 01h
+    jmp game_loop   
+    
+jump_key_esc:
+    jmp exit
+
+process_key:                        
     inc wait_i 
     cmp wait_i, wait_time               ; wait_loop condition
     jl wait_loop                        
@@ -90,54 +121,30 @@ skip_key:
     je jump_key_right
     
     cmp key_code, 01h                   ; If key_code ESC
-    je jump_key_esc                                                               
-    jmp game_loop                  
-            
-    jump_key_up:                        ; Set directions according to key_code
-    mov head_dir_y, -01h
-    mov head_dir_x, 00h
-    jmp game_loop  
+    je jump_key_esc   
     
-jump_key_down:
-    mov head_dir_y, 01h
-    mov head_dir_x, 00h
-    jmp game_loop 
-    
-jump_key_left:
-    mov head_dir_y, 00h
-    mov head_dir_x, -01h
-    jmp game_loop 
-    
-jump_key_right:
-    mov head_dir_y, 00h
-    mov head_dir_x, 01h
-    jmp game_loop   
-    
-jump_key_esc:
-    jmp exit
-    
+    jmp game_loop                       ; Else
+
 ; PROCDURES  
 draw_snake PROC    
     mov al, 01h                        
     mov cx, 01h                        
     mov bp, offset cell_symbol        
-                                             
+    mov ah, 13h
+    
     mov bl, 1Ah                         ; Draw first body element to clear previous head position
     mov dl, body_x        
     mov dh, body_y         
-    mov ah, 13h            
     int 10h
    
     mov bl, 12h                         ; Draw head position
     mov dl, head_x                      
     mov dh, head_y                      
-    mov ah, 13h                        
     int 10h  
  
     mov bl, 18h                         ; Clear last body element
     mov dl, body_clear_x         
     mov dh, body_clear_y           
-    mov ah, 13h           
     int 10h    
          
     ret
@@ -158,45 +165,31 @@ draw_food PROC
 ENDP
 
 move_snake PROC   
-    lea si, body_x                      ; Set body_clear_x
-    add si, body_len
-    dec si  
-    mov al, byte ptr [si] 
+    mov si, body_len                    ; Set body_clear position
+    dec si    
+    mov al, body_x[si]                  
     mov body_clear_x, al
-    lea si, body_y                      ; Set body_clear_y
-    add si, body_len
-    dec si  
-    mov al, byte ptr [si] 
+    mov al, body_y[si]                 
     mov body_clear_y, al
     
-    mov ax, body_len                    ; Move_body_loop
-    mov body_i, ax
+    mov di, body_len                    ; Move body loop start
 move_body_loop:
-    dec body_i
+    dec di
+    mov si, di
+    dec si
     
-    lea si, body_x                      ; Move body_x
-    lea di, body_x
-    add si, body_i 
-    add di, body_i
-    dec di   
-    mov al, byte ptr [di]  
-    mov byte ptr [si], al    
-    
-    lea si, body_y                      ; Move body_y
-    lea di, body_y
-    add si, body_i 
-    add di, body_i
-    dec di   
-    mov al, byte ptr [di]  
-    mov byte ptr [si], al 
-                                            
-    cmp body_i, 01h                     ; Move_body_loop condition
+    mov al, body_x[si]                  ; Move every body element to previous
+    mov body_x[di], al
+    mov al, body_y[si]
+    mov body_y[di], al
+                                      
+    cmp di, 01h                         ; Move body loop condition
     jg move_body_loop 
     
-    mov al, head_x                      ; First body move to head
-    mov body_x, al
-    mov al, head_y     
-    mov body_y, al 
+    mov al, head_x[00h]                 ; First body move to head
+    mov body_x[00h], al
+    mov al, head_y[00h]     
+    mov body_y[00h], al 
     
     mov al, head_x                      ; Move head
     add al, head_dir_x
@@ -205,26 +198,26 @@ move_body_loop:
     add al, head_dir_y
     mov head_y, al
     
-    cmp head_x, 00h                     ; If leave left border
+    cmp head_x, 00h                     ; If head leave left border
     jl leave_left_border
     
-    cmp head_y, 00h                     ; If leave up border
+    cmp head_y, 00h                     ; If head leave up border
     jl leave_up_border
       
-    cmp head_x, width                   ; If leave right border
+    cmp head_x, G_WIDTH                 ; If head leave right border
     jge leave_right_border
          
-    cmp head_y, height                  ; If leave bottom border
+    cmp head_y, G_HEIGHT                ; If head leave bottom border
     jge leave_bottom_border
     
-    jmp move_snake_endp                 ; Else jump to move_snake_endp
+    jmp move_snake_endp                 ; Else 
     
 leave_left_border:
-    mov head_x, width-1
+    mov head_x, G_WIDTH-1
     jmp move_snake_endp
 
 leave_up_border:
-    mov head_y, height-1
+    mov head_y, G_HEIGHT-1
     jmp move_snake_endp
     
 leave_right_border:
@@ -261,12 +254,12 @@ spawn_food PROC
      
     xor dh, dh                          ; Count food_x 
     mov ax, dx 
-    mov bl, width
+    mov bl, G_WIDTH
     div bl                              ; AX/BL -> integer in AL, rest in AH
     mov food_x, ah        
 
     mov ax, dx                          ; Count food_y
-    mov bl, height
+    mov bl, G_HEIGHT
     div bl        
     mov food_y, ah
     
@@ -277,4 +270,4 @@ exit:                                   ; Exit
     mov ah, 4Ch
     int 21h 
     
-end start
+END main
